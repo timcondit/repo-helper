@@ -1,48 +1,59 @@
 #!/usr/bin/env python
 #
-# repo-helper: Given a Git URI, clone it into a "namespaced" subdirectory and symlink it to the base subdirectory.
+# repo-helper: Given a Git URI, clone it into a "namespaced" subdirectory and
+#   symlink it to the base subdirectory.
 #
-# Motivation:   I want to see all my repos, while keeping things tidy.
-# Caveat:       If there are two repositories with the same name at different paths, the symlinking will fail. The workaround will be to prepend the second repository's symlink name with the project, then a dunder, then the repository name.
-#   Example: johnny/dotfiles already exists, and suzy/dotfiles is added. Instead of a symlink to ~/src/dotfiles, I'll create ~/src/suzy__dotfiles.
+# Motivation: I want to see all my repos, while keeping things tidy.
+#
+# If cloning <https://github.com/jan-warchol/selenized>, the paths will be:
+#   path1: /Users/tcondit/src
+#   path2: /Users/tcondit/src/github.com
+#   path3: jan-warchol
+#   path4: /Users/tcondit/src/github.com/jan-warchol
+#   project: selenized
+#
+# Caveat 1: If there are two repositories with the same name at different
+#   paths, the symlinking will fail. The workaround will be to prepend the
+#   second repository's symlink name with the project, then a dunder, then the
+#   repository name.
+# Example: johnny/dotfiles already exists, and suzy/dotfiles is added. Instead
+#   of a symlink to ~/src/dotfiles, I'll create ~/src/suzy__dotfiles.
 
-from pathlib import Path
-from urllib.parse import urlparse
 import git
 import os
 import sys
+from pathlib import Path
+from urllib.parse import urlparse
 
+# I'm not adding any parameter guards yet.
 url = sys.argv[1]
 o = urlparse(url)
-# print(f"o.scheme: {o.scheme}")
-# print(f"o.netloc: {o.netloc}")
-# print(f"o.path: {o.path}")
 
-# Create netloc directory if it doesn't exist.
+# path1 is not configurable yet.
 path1 = "/Users/tcondit/src"
 path2 = os.path.join(path1, o.netloc)
 Path(path2).mkdir(parents=True, exist_ok=True)
 
-# Create path3 minus the project name if it doesn't exist.
 path3, project = o.path.rsplit("/", 1)
-path3 = path3.lstrip("/")
-path4 = os.path.join(path2, path3)
-
-# print(f"path1: {path1}")
-# print(f"path2: {path2}")
-# print(f"path3: {path3}")
-# print(f"path4: {path4}")
-# print(f"project: {project}")
-
-# This '.lstrip("/")' is sure to cause problems.
-# Path(os.path.join(path2, path3.lstrip("/"))).mkdir(parents=True, exist_ok=True)
+# This '.lstrip("/")' may cause problems.
+path4 = os.path.join(path2, path3.lstrip("/"))
 Path(path4).mkdir(parents=True, exist_ok=True)
 
-# There's no explicit auth yet. You'll need to provide a GitLab personal access token.
-
+# There's no explicit auth yet. You'll need to provide a GitLab or GitHub
+# personal access token, at least the first time. git-python may be caching
+# credentials.
 try:
+    # I'm not adding any filesystem guards yet.
     print(f"Cloning {url} ~> {path4}")
-    git.Git(path4).clone(url)
+    git.Git(path4).clone(url.strip(".git"))
 except git.exc.GitCommandError as e:
     print(f"\n{e}")
+    print("\nWill still attempt to create symlink if needed.")
 
+src = os.path.join(path4, project)
+dst = os.path.join(path1, project)
+# I'm not adding any is_symlink() guards yet.
+try:
+    Path(dst).symlink_to(Path(src))
+except Exception as e:
+    print(f"\n{e}")
