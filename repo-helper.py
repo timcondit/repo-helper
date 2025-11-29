@@ -6,10 +6,10 @@
 # Motivation: I want to see all my repos, while keeping things tidy.
 #
 # If cloning <https://github.com/jan-warchol/selenized>, the paths will be:
-#   path1: /Users/tcondit/src
-#   path2: /Users/tcondit/src/github.com
+#   path1: /Users/timc/src
+#   path2: /Users/timc/src/github.com
 #   path3: jan-warchol
-#   path4: /Users/tcondit/src/github.com/jan-warchol
+#   path4: /Users/timc/src/github.com/jan-warchol
 #   project: selenized
 #
 # Caveat 1: If there are two repositories with the same name at different
@@ -30,7 +30,7 @@ url = sys.argv[1]
 o = urlparse(url)
 
 # path1 is not configurable yet.
-path1 = "/Users/tcondit/src"
+path1 = "/Users/timc/src"
 path2 = os.path.join(path1, o.netloc)
 Path(path2).mkdir(parents=True, exist_ok=True)
 
