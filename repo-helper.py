@@ -159,6 +159,8 @@ def validate(fix=False):
     fixed = 0
     checked = 0
     seen_symlinks = set()
+    # Track all repos by project base name for duplicate detection
+    project_repos = {}  # project_name -> list of repo_dir paths
 
     for git_dir in sorted(clone_base.rglob(".git")):
         if not git_dir.is_dir():
@@ -173,6 +175,7 @@ def validate(fix=False):
             continue
 
         host, owner, project = parts
+        project_repos.setdefault(project, []).append(repo_dir)
         expected_https = f"https://{host}/{owner}/{project}.git"
         expected_ssh = f"git@{host}:{owner}/{project}.git"
         expected = (expected_https, expected_ssh)
@@ -253,10 +256,27 @@ def validate(fix=False):
                 errors += 1
                 orphaned += 1
 
+    # Report duplicate base names without symlinks
+    duplicates = {name: paths for name, paths in project_repos.items() if len(paths) > 1}
+    if duplicates:
+        print("DUPLICATE BASE NAMES:")
+        for name in sorted(duplicates):
+            paths = duplicates[name]
+            symlink_path = symlink_base / name
+            if symlink_path.is_symlink():
+                symlink_target = os.path.realpath(os.readlink(symlink_path))
+            else:
+                symlink_target = None
+            for p in sorted(paths):
+                has_link = symlink_target == str(os.path.realpath(p))
+                marker = " (symlinked)" if has_link else " (no symlink)"
+                print(f"  {name}: {p}{marker}")
+        print()
+
     if fix:
-        print(f"\nChecked {checked} repo(s), fixed {fixed} issue(s), {errors} remaining issue(s).")
+        print(f"Checked {checked} repo(s), fixed {fixed} issue(s), {errors} remaining issue(s).")
     else:
-        print(f"\nChecked {checked} repo(s), {orphaned} orphaned/broken symlink(s), {errors} total issue(s) found.")
+        print(f"Checked {checked} repo(s), {orphaned} orphaned/broken symlink(s), {errors} total issue(s) found.")
 
 
 def build_parser():
