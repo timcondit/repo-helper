@@ -19,7 +19,6 @@
 # Example: johnny/dotfiles already exists, and suzy/dotfiles is added. Instead
 #   of a symlink to ~/src/dotfiles, I'll create ~/src/suzy__dotfiles.
 
-# TODO: Add create functions.
 # TODO: Add delete functionality.
 
 import git
@@ -29,50 +28,69 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-# I'm not adding any parameter guards yet.
-url = sys.argv[1]
-
 # symlink_base is not configurable yet.
-symlink_base = "/Users/timc/src"
-clone_base = os.path.join(symlink_base, "hosts")
+SYMLINK_BASE = "/Users/timc/src"
+CLONE_BASE = os.path.join(SYMLINK_BASE, "hosts")
 
-# Parse both HTTPS and SSH URL formats:
-#   HTTPS: https://github.com/timcondit/repo-helper.git
-#   SSH:   git@github.com:timcondit/repo-helper.git
-ssh_match = re.match(r"^git@([^:]+):(.+)$", url)
-if ssh_match:
-    netloc = ssh_match.group(1)
-    repo_path = ssh_match.group(2)
-else:
-    o = urlparse(url)
-    netloc = o.netloc
-    repo_path = o.path.lstrip("/")
 
-host_dir = os.path.join(clone_base, netloc)
-Path(host_dir).mkdir(parents=True, exist_ok=True)
+def parse_url(url):
+    """Parse a git URL (HTTPS or SSH) and return (host, owner, project).
 
-owner, project_raw = repo_path.rsplit("/", 1)
-project = project_raw.removesuffix(".git")
-owner_dir = os.path.join(host_dir, owner)
-Path(owner_dir).mkdir(parents=True, exist_ok=True)
+    Supports:
+        HTTPS: https://github.com/timcondit/repo-helper.git
+        SSH:   git@github.com:timcondit/repo-helper.git
+    """
+    ssh_match = re.match(r"^git@([^:]+):(.+)$", url)
+    if ssh_match:
+        host = ssh_match.group(1)
+        repo_path = ssh_match.group(2)
+    else:
+        o = urlparse(url)
+        host = o.netloc
+        repo_path = o.path.lstrip("/")
 
-# There's no explicit auth yet. You'll need to provide a GitLab or GitHub
-# personal access token, at least the first time. git-python may be caching
-# credentials.
-try:
-    # I'm not adding any filesystem guards yet.
+    owner, project_raw = repo_path.rsplit("/", 1)
+    project = project_raw.removesuffix(".git")
+    return host, owner, project
+
+
+def clone_repo(url, owner_dir, project):
+    """Clone a git repo into owner_dir. Ensures the clone URL ends with .git.
+
+    There's no explicit auth yet. You'll need to provide a GitLab or GitHub
+    personal access token, at least the first time. git-python may be caching
+    credentials.
+    """
     clone_url = url if url.endswith(".git") else url + ".git"
     print(f"Cloning {clone_url} ~> {os.path.join(owner_dir, project)}")
     git.Git(owner_dir).clone(clone_url)
 
-except git.exc.GitCommandError as e:
-    print(f"\n{e}")
-    print("\nWill still attempt to create symlink if needed.")
 
-src = os.path.join(owner_dir, project)
-dst = os.path.join(symlink_base, project)
-# I'm not adding any is_symlink() guards yet.
-try:
+def create_symlink(owner_dir, project):
+    """Create a symlink from SYMLINK_BASE/<project> to owner_dir/<project>."""
+    src = os.path.join(owner_dir, project)
+    dst = os.path.join(SYMLINK_BASE, project)
     Path(dst).symlink_to(Path(src))
-except Exception as e:
-    print(f"\n{e}")
+
+
+def main():
+    url = sys.argv[1]
+    host, owner, project = parse_url(url)
+
+    owner_dir = os.path.join(CLONE_BASE, host, owner)
+    Path(owner_dir).mkdir(parents=True, exist_ok=True)
+
+    try:
+        clone_repo(url, owner_dir, project)
+    except git.exc.GitCommandError as e:
+        print(f"\n{e}")
+        print("\nWill still attempt to create symlink if needed.")
+
+    try:
+        create_symlink(owner_dir, project)
+    except Exception as e:
+        print(f"\n{e}")
+
+
+if __name__ == "__main__":
+    main()
