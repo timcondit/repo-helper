@@ -19,11 +19,10 @@
 # Example: johnny/dotfiles already exists, and suzy/dotfiles is added. Instead
 #   of a symlink to ~/src/dotfiles, I'll create ~/src/suzy__dotfiles.
 
-# TODO: Add delete functionality.
-
 import git
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -73,23 +72,65 @@ def create_symlink(owner_dir, project):
     Path(dst).symlink_to(Path(src))
 
 
+def delete_repo(owner_dir, project):
+    """Delete a cloned repo and its symlink.
+
+    Removes the symlink at SYMLINK_BASE/<project> and the cloned repo at
+    owner_dir/<project>. Cleans up empty parent directories (owner_dir,
+    host_dir) under CLONE_BASE if they become empty after deletion.
+    """
+    symlink_path = Path(os.path.join(SYMLINK_BASE, project))
+    repo_path = Path(os.path.join(owner_dir, project))
+
+    # Remove symlink
+    if symlink_path.is_symlink():
+        symlink_path.unlink()
+        print(f"Removed symlink {symlink_path}")
+    else:
+        print(f"No symlink found at {symlink_path}")
+
+    # Remove cloned repo
+    if repo_path.is_dir():
+        shutil.rmtree(repo_path)
+        print(f"Removed repo {repo_path}")
+    else:
+        print(f"No repo found at {repo_path}")
+
+    # Clean up empty parent directories up to CLONE_BASE
+    for parent in [Path(owner_dir), Path(owner_dir).parent]:
+        if parent == Path(CLONE_BASE):
+            break
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+            print(f"Removed empty directory {parent}")
+
+
 def main():
-    url = sys.argv[1]
-    host, owner, project = parse_url(url)
+    if len(sys.argv) >= 3 and sys.argv[1] == "--delete":
+        url = sys.argv[2]
+        host, owner, project = parse_url(url)
+        owner_dir = os.path.join(CLONE_BASE, host, owner)
+        delete_repo(owner_dir, project)
+    elif len(sys.argv) >= 2:
+        url = sys.argv[1]
+        host, owner, project = parse_url(url)
 
-    owner_dir = os.path.join(CLONE_BASE, host, owner)
-    Path(owner_dir).mkdir(parents=True, exist_ok=True)
+        owner_dir = os.path.join(CLONE_BASE, host, owner)
+        Path(owner_dir).mkdir(parents=True, exist_ok=True)
 
-    try:
-        clone_repo(url, owner_dir, project)
-    except git.exc.GitCommandError as e:
-        print(f"\n{e}")
-        print("\nWill still attempt to create symlink if needed.")
+        try:
+            clone_repo(url, owner_dir, project)
+        except git.exc.GitCommandError as e:
+            print(f"\n{e}")
+            print("\nWill still attempt to create symlink if needed.")
 
-    try:
-        create_symlink(owner_dir, project)
-    except Exception as e:
-        print(f"\n{e}")
+        try:
+            create_symlink(owner_dir, project)
+        except Exception as e:
+            print(f"\n{e}")
+    else:
+        print("Usage: repo-helper.py [--delete] <url>")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
