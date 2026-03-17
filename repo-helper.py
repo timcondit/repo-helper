@@ -105,8 +105,81 @@ def delete_repo(owner_dir, project):
             print(f"Removed empty directory {parent}")
 
 
+def validate_remotes():
+    """Verify that all repos under CLONE_BASE have correct origin remotes.
+
+    For each git repo found, the expected remote is derived from its path:
+        ~/src/hosts/<host>/<owner>/<project>
+    should have an origin of either:
+        https://<host>/<owner>/<project>.git   (HTTPS)
+        git@<host>:<owner>/<project>.git       (SSH)
+
+    Forks are recognized when origin doesn't match the path but an
+    upstream remote does (i.e., origin points to the user's fork and
+    upstream points to the original repo).
+    """
+    clone_base = Path(CLONE_BASE)
+    if not clone_base.is_dir():
+        print(f"Clone base {CLONE_BASE} does not exist.")
+        return
+
+    errors = 0
+    checked = 0
+    for git_dir in sorted(clone_base.rglob(".git")):
+        if not git_dir.is_dir():
+            continue
+
+        repo_dir = git_dir.parent
+        # Derive host/owner/project from path relative to CLONE_BASE
+        rel = repo_dir.relative_to(clone_base)
+        parts = rel.parts
+        if len(parts) != 3:
+            print(f"SKIP     {repo_dir} (unexpected depth: {'/'.join(parts)})")
+            continue
+
+        host, owner, project = parts
+        expected_https = f"https://{host}/{owner}/{project}.git"
+        expected_ssh = f"git@{host}:{owner}/{project}.git"
+        expected = (expected_https, expected_ssh)
+
+        try:
+            repo = git.Repo(repo_dir)
+            origin_url = repo.remotes.origin.url
+        except Exception as e:
+            print(f"ERROR    {repo_dir}: {e}")
+            errors += 1
+            continue
+
+        checked += 1
+        if origin_url in expected:
+            print(f"OK       {repo_dir}")
+        else:
+            # Check if this is a fork: origin is the user's fork,
+            # upstream points to the original repo
+            upstream_url = None
+            if "upstream" in [r.name for r in repo.remotes]:
+                upstream_url = repo.remotes.upstream.url
+
+            if upstream_url in expected:
+                print(f"FORK     {repo_dir}")
+                print(f"  origin:   {origin_url}")
+                print(f"  upstream: {upstream_url}")
+            else:
+                print(f"MISMATCH {repo_dir}")
+                print(f"  origin:   {origin_url}")
+                if upstream_url:
+                    print(f"  upstream: {upstream_url}")
+                print(f"  expected: {expected_https}")
+                print(f"       or:  {expected_ssh}")
+                errors += 1
+
+    print(f"\nChecked {checked} repo(s), {errors} issue(s) found.")
+
+
 def main():
-    if len(sys.argv) >= 3 and sys.argv[1] == "--delete":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--validate":
+        validate_remotes()
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--delete":
         url = sys.argv[2]
         host, owner, project = parse_url(url)
         owner_dir = os.path.join(CLONE_BASE, host, owner)
@@ -129,7 +202,7 @@ def main():
         except Exception as e:
             print(f"\n{e}")
     else:
-        print("Usage: repo-helper.py [--delete] <url>")
+        print("Usage: repo-helper.py [--delete|--validate] <url>")
         sys.exit(1)
 
 
