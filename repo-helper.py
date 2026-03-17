@@ -12,13 +12,12 @@
 #   project:    selenized
 #   symlink:    /Users/timc/src/selenized -> /Users/timc/src/hosts/github.com/jan-warchol/selenized
 #
-# Caveat 1: If there are two repositories with the same name at different
-#   paths, the symlinking will fail. The workaround will be to prepend the
-#   second repository's symlink name with the project, then a dunder, then the
-#   repository name.
-# Example: johnny/dotfiles already exists, and suzy/dotfiles is added. Instead
-#   of a symlink to ~/src/dotfiles, I'll create ~/src/suzy__dotfiles.
+# Note: If two repositories share the same project name (e.g.,
+#   johnny/dotfiles and suzy/dotfiles), only the first gets a symlink.
+#   The second clone still succeeds but the symlink is skipped with a
+#   warning. The repo is accessible via its full path under hosts/.
 
+import argparse
 import git
 import os
 import re
@@ -56,19 +55,39 @@ def parse_url(url):
 def clone_repo(url, owner_dir, project):
     """Clone a git repo into owner_dir. Ensures the clone URL ends with .git.
 
-    There's no explicit auth yet. You'll need to provide a GitLab or GitHub
-    personal access token, at least the first time. git-python may be caching
-    credentials.
+    Skips if the destination directory already exists. There's no explicit
+    auth yet. You'll need to provide a GitLab or GitHub personal access
+    token, at least the first time. git-python may be caching credentials.
     """
+    dest = os.path.join(owner_dir, project)
+    if os.path.isdir(dest):
+        print(f"Already cloned: {dest}")
+        return
+
     clone_url = url if url.endswith(".git") else url + ".git"
-    print(f"Cloning {clone_url} ~> {os.path.join(owner_dir, project)}")
+    print(f"Cloning {clone_url} ~> {dest}")
     git.Git(owner_dir).clone(clone_url)
 
 
 def create_symlink(owner_dir, project):
-    """Create a symlink from SYMLINK_BASE/<project> to owner_dir/<project>."""
+    """Create a symlink from SYMLINK_BASE/<project> to owner_dir/<project>.
+
+    If a symlink with the same name already exists (e.g., another repo with
+    the same project name), prints a warning and skips. The repo is still
+    accessible via its full path under CLONE_BASE.
+    """
     src = os.path.join(owner_dir, project)
     dst = os.path.join(SYMLINK_BASE, project)
+    dst_path = Path(dst)
+    if dst_path.is_symlink() or dst_path.exists():
+        existing_target = os.readlink(dst) if dst_path.is_symlink() else dst
+        if os.path.realpath(existing_target) == os.path.realpath(src):
+            print(f"Symlink already exists: {dst} -> {src}")
+        else:
+            print(f"Warning: symlink {dst} already exists -> {existing_target}")
+            print(f"  Skipping symlink for {src}")
+            print(f"  Access this repo at its full path: {src}")
+        return
     Path(dst).symlink_to(Path(src))
 
 
@@ -176,23 +195,100 @@ def validate_remotes():
     print(f"\nChecked {checked} repo(s), {errors} issue(s) found.")
 
 
-def main():
-    if len(sys.argv) >= 2 and sys.argv[1] == "--validate":
-        validate_remotes()
-    elif len(sys.argv) >= 3 and sys.argv[1] == "--delete":
-        url = sys.argv[2]
-        host, owner, project = parse_url(url)
-        owner_dir = os.path.join(CLONE_BASE, host, owner)
-        delete_repo(owner_dir, project)
-    elif len(sys.argv) >= 2:
-        url = sys.argv[1]
-        host, owner, project = parse_url(url)
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="repo-helper",
+        description=(
+            "Clone git repos into namespaced subdirectories under "
+            f"{CLONE_BASE}/ and symlink them to {SYMLINK_BASE}/."
+        ),
+    )
+    subparsers = parser.add_subparsers(dest="command")
 
+    # clone (default when just a URL is given)
+    clone_parser = subparsers.add_parser(
+        "clone",
+        help="Clone a repo and create a symlink to it.",
+        description=(
+            "Clone a git repo into ~/src/hosts/<host>/<owner>/<project> "
+            "and create a symlink at ~/src/<project>. Both HTTPS and SSH "
+            "URLs are supported. The .git suffix is added to the clone URL "
+            "if not already present, so the remote matches GitHub's format."
+        ),
+    )
+    clone_parser.add_argument(
+        "url",
+        help=(
+            "Git URL to clone. Accepts HTTPS (https://github.com/owner/repo) "
+            "or SSH (git@github.com:owner/repo.git). The .git suffix is added "
+            "automatically if not present."
+        ),
+    )
+
+    # delete
+    delete_parser = subparsers.add_parser(
+        "delete",
+        help="Delete a cloned repo and its symlink.",
+        description=(
+            "Remove the cloned repo and its symlink. Also cleans up empty "
+            "parent directories (owner, host) under the clone base."
+        ),
+    )
+    delete_parser.add_argument(
+        "url",
+        help=(
+            "Git URL of the repo to delete. Accepts the same HTTPS or SSH "
+            "formats used for cloning. The host, owner, and project are "
+            "derived from the URL to locate the repo and symlink."
+        ),
+    )
+
+    # validate
+    subparsers.add_parser(
+        "validate",
+        help="Verify that all repo remotes are correct.",
+        description=(
+            "Walk all repos under ~/src/hosts/ and check that each repo's "
+            "origin remote matches the expected URL derived from its "
+            "directory path.\n\n"
+            "For forked repos, origin typically points to your fork rather "
+            "than the upstream project. To avoid false positives, add an "
+            "upstream remote pointing to the original repo:\n\n"
+            "  git remote add upstream https://github.com/<owner>/<project>.git\n\n"
+            "When an upstream remote is present and matches the expected "
+            "URL, the repo is reported as FORK instead of MISMATCH."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+
+    # Support bare URL as shorthand for "clone <url>" and
+    # legacy --delete/--validate flags
+    subcommands = {"clone", "delete", "validate"}
+    args = sys.argv[1:]
+    if args and args[0] == "--delete":
+        args = ["delete"] + args[1:]
+    elif args and args[0] == "--validate":
+        args = ["validate"] + args[1:]
+    elif args and args[0] not in subcommands and not args[0].startswith("-"):
+        # Bare URL → treat as clone (must look like a URL)
+        if "://" in args[0] or args[0].startswith("git@"):
+            args = ["clone"] + args
+
+    parsed = parser.parse_args(args)
+
+    if parsed.command == "clone":
+        host, owner, project = parse_url(parsed.url)
         owner_dir = os.path.join(CLONE_BASE, host, owner)
         Path(owner_dir).mkdir(parents=True, exist_ok=True)
 
         try:
-            clone_repo(url, owner_dir, project)
+            clone_repo(parsed.url, owner_dir, project)
         except git.exc.GitCommandError as e:
             print(f"\n{e}")
             print("\nWill still attempt to create symlink if needed.")
@@ -201,8 +297,17 @@ def main():
             create_symlink(owner_dir, project)
         except Exception as e:
             print(f"\n{e}")
+
+    elif parsed.command == "delete":
+        host, owner, project = parse_url(parsed.url)
+        owner_dir = os.path.join(CLONE_BASE, host, owner)
+        delete_repo(owner_dir, project)
+
+    elif parsed.command == "validate":
+        validate_remotes()
+
     else:
-        print("Usage: repo-helper.py [--delete|--validate] <url>")
+        parser.print_help()
         sys.exit(1)
 
 
