@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+# /// script
+# dependencies = ["GitPython"]
+# ///
 #
 # repo-helper: Given a Git URI, clone it into a "namespaced" subdirectory and
 #   symlink it to the base subdirectory.
@@ -124,10 +127,11 @@ def delete_repo(owner_dir, project):
             print(f"Removed empty directory {parent}")
 
 
-def validate_remotes():
-    """Verify that all repos under CLONE_BASE have correct origin remotes.
+def validate(fix=False):
+    """Verify remotes and symlinks for all repos under CLONE_BASE.
 
-    For each git repo found, the expected remote is derived from its path:
+    Remote checks: For each git repo found, the expected remote is derived
+    from its path:
         ~/src/hosts/<host>/<owner>/<project>
     should have an origin of either:
         https://<host>/<owner>/<project>.git   (HTTPS)
@@ -136,14 +140,26 @@ def validate_remotes():
     Forks are recognized when origin doesn't match the path but an
     upstream remote does (i.e., origin points to the user's fork and
     upstream points to the original repo).
+
+    Symlink checks: For each repo, verifies a symlink exists at
+    SYMLINK_BASE/<project> pointing to the repo. Also scans SYMLINK_BASE
+    for broken or orphaned symlinks.
+
+    If fix=True, automatically creates missing symlinks (skipping name
+    conflicts) and removes broken/orphaned symlinks. Remote mismatches
+    are not auto-fixed.
     """
     clone_base = Path(CLONE_BASE)
+    symlink_base = Path(SYMLINK_BASE)
     if not clone_base.is_dir():
         print(f"Clone base {CLONE_BASE} does not exist.")
         return
 
     errors = 0
+    fixed = 0
     checked = 0
+    seen_symlinks = set()
+
     for git_dir in sorted(clone_base.rglob(".git")):
         if not git_dir.is_dir():
             continue
@@ -170,11 +186,11 @@ def validate_remotes():
             continue
 
         checked += 1
+
+        # Check remote
         if origin_url in expected:
             print(f"OK       {repo_dir}")
         else:
-            # Check if this is a fork: origin is the user's fork,
-            # upstream points to the original repo
             upstream_url = None
             if "upstream" in [r.name for r in repo.remotes]:
                 upstream_url = repo.remotes.upstream.url
@@ -192,7 +208,55 @@ def validate_remotes():
                 print(f"       or:  {expected_ssh}")
                 errors += 1
 
-    print(f"\nChecked {checked} repo(s), {errors} issue(s) found.")
+        # Check symlink
+        symlink_path = symlink_base / project
+        if symlink_path.is_symlink():
+            target = Path(os.readlink(symlink_path))
+            if os.path.realpath(target) == os.path.realpath(repo_dir):
+                seen_symlinks.add(symlink_path)
+            else:
+                # Symlink exists but points to a different repo (name conflict)
+                seen_symlinks.add(symlink_path)
+        else:
+            if fix:
+                # Use create_symlink which handles name conflicts gracefully
+                create_symlink(str(repo_dir.parent), project)
+                seen_symlinks.add(symlink_path)
+                fixed += 1
+            else:
+                print(f"  NO SYMLINK for {project} (expected {symlink_path})")
+                errors += 1
+
+    # Check for broken or orphaned symlinks in SYMLINK_BASE
+    print()
+    orphaned = 0
+    for entry in sorted(symlink_base.iterdir()):
+        if not entry.is_symlink():
+            continue
+        target = Path(os.readlink(entry))
+        if not target.exists():
+            if fix:
+                entry.unlink()
+                print(f"FIXED    removed broken symlink {entry} -> {target}")
+                fixed += 1
+            else:
+                print(f"BROKEN   {entry} -> {target}")
+                errors += 1
+                orphaned += 1
+        elif entry not in seen_symlinks and str(target).startswith(str(clone_base)):
+            if fix:
+                entry.unlink()
+                print(f"FIXED    removed orphaned symlink {entry} -> {target}")
+                fixed += 1
+            else:
+                print(f"ORPHAN   {entry} -> {target}")
+                errors += 1
+                orphaned += 1
+
+    if fix:
+        print(f"\nChecked {checked} repo(s), fixed {fixed} issue(s), {errors} remaining issue(s).")
+    else:
+        print(f"\nChecked {checked} repo(s), {orphaned} orphaned/broken symlink(s), {errors} total issue(s) found.")
 
 
 def build_parser():
@@ -244,13 +308,14 @@ def build_parser():
     )
 
     # validate
-    subparsers.add_parser(
+    validate_parser = subparsers.add_parser(
         "validate",
-        help="Verify that all repo remotes are correct.",
+        help="Verify that all repo remotes and symlinks are correct.",
         description=(
             "Walk all repos under ~/src/hosts/ and check that each repo's "
             "origin remote matches the expected URL derived from its "
-            "directory path.\n\n"
+            "directory path. Also verifies symlinks exist and scans for "
+            "broken or orphaned symlinks.\n\n"
             "For forked repos, origin typically points to your fork rather "
             "than the upstream project. To avoid false positives, add an "
             "upstream remote pointing to the original repo:\n\n"
@@ -259,6 +324,14 @@ def build_parser():
             "URL, the repo is reported as FORK instead of MISMATCH."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    validate_parser.add_argument(
+        "--fix", action="store_true",
+        help=(
+            "Automatically fix issues: create missing symlinks (skipping "
+            "name conflicts) and remove broken/orphaned symlinks. Remote "
+            "mismatches are not auto-fixed."
+        ),
     )
 
     return parser
@@ -304,7 +377,7 @@ def main():
         delete_repo(owner_dir, project)
 
     elif parsed.command == "validate":
-        validate_remotes()
+        validate(fix=parsed.fix)
 
     else:
         parser.print_help()
