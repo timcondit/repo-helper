@@ -257,7 +257,9 @@ def validate(fix=False):
                 orphaned += 1
 
     # Report duplicate base names without symlinks
-    duplicates = {name: paths for name, paths in project_repos.items() if len(paths) > 1}
+    duplicates = {
+        name: paths for name, paths in project_repos.items() if len(paths) > 1
+    }
     if duplicates:
         print("DUPLICATE BASE NAMES:")
         for name in sorted(duplicates):
@@ -274,9 +276,13 @@ def validate(fix=False):
         print()
 
     if fix:
-        print(f"Checked {checked} repo(s), fixed {fixed} issue(s), {errors} remaining issue(s).")
+        print(
+            f"Checked {checked} repo(s), fixed {fixed} issue(s), {errors} remaining issue(s)."
+        )
     else:
-        print(f"Checked {checked} repo(s), {orphaned} orphaned/broken symlink(s), {errors} total issue(s) found.")
+        print(
+            f"Checked {checked} repo(s), {orphaned} orphaned/broken symlink(s), {errors} total issue(s) found."
+        )
 
 
 def build_parser():
@@ -346,7 +352,8 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     validate_parser.add_argument(
-        "--fix", action="store_true",
+        "--fix",
+        action="store_true",
         help=(
             "Automatically fix issues: create missing symlinks (skipping "
             "name conflicts) and remove broken/orphaned symlinks. Remote "
